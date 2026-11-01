@@ -4,7 +4,9 @@ Fire a zip into a GitHub repo. Pick a zip, pick a repo, push.
 
 Open **Settings** to add, change or remove your GitHub token (saved in localStorage).
 
-Runs entirely in the browser: the zip is unpacked locally and committed through
+Deploys use the Vercel API through the small `api/vercel.js` function (the Vercel API blocks browser calls); your Vercel token is forwarded per request and never stored server-side.
+
+Pushing runs entirely in the browser: the zip is unpacked locally and committed through
 GitHub's Git Data API as a single commit. Your token never touches a server.
 
 ## Flow
@@ -39,3 +41,6 @@ src/styles/         theme tokens, app styles
 ```
 
 Limits: empty repos (no commits) aren't supported; files over ~100 MB are rejected by GitHub.
+
+## Deploy to Vercel
+Add a Vercel token in Settings, pick a repo, press **Deploy to Vercel**, review the settings, deploy. The Vercel GitHub app must be installed for the repo's owner. `api/vercel.js` only runs on Vercel (or `vercel dev`).

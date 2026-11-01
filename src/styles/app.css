@@ -13,7 +13,7 @@ button{font:inherit;cursor:pointer;border:0;border-radius:var(--radius)}
 .primary:active:not(:disabled){transform:scale(.99)}
 .primary:disabled{background:var(--sand);color:var(--umber);opacity:.6;cursor:not-allowed}
 .danger{background:var(--ink);color:var(--cream);padding:12px 18px;font-weight:600}
-input[type=password],input[type=search],select{width:100%;font:inherit;color:var(--ink);background:var(--paper);border:1.5px solid var(--sand);border-radius:var(--radius);padding:14px 16px}
+input[type=password],input[type=search],input[type=text],textarea,select{width:100%;font:inherit;color:var(--ink);background:var(--paper);border:1.5px solid var(--sand);border-radius:var(--radius);padding:14px 16px}
 input:focus,select:focus{border-color:var(--sienna);outline:none;box-shadow:0 0 0 3px #e9745133}
 .lead{margin:0;font-size:1.1rem}.hint{color:var(--sienna-deep);font-size:.9rem}
 
@@ -64,3 +64,22 @@ dialog{width:min(560px,92vw)}
 .actions{display:flex;justify-content:flex-end;gap:8px}
 @media (max-width:480px){.modes{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+
+.repoHead{display:flex;gap:8px}.repoHead input{flex:1;min-width:0}
+.outline{background:var(--paper);border:1.5px solid var(--sand);color:var(--ink);padding:0 16px;white-space:nowrap;font-weight:600}
+.outline:hover{border-color:var(--sienna);background:#e974511a}
+#undo{align-self:flex-start;text-decoration:underline;text-underline-offset:3px}
+.msg{margin:0;min-height:1.4em;color:#a3321b;font-weight:500}
+#newRepoDlg input[type=search]{-webkit-appearance:none}
+
+.wideBtn{width:100%;height:48px}.wideBtn:disabled{opacity:.5;cursor:not-allowed}
+#deployDlg form>div,#deployDlg .grid{display:flex;flex-direction:column;gap:12px}
+#deployDlg .grid{display:grid;grid-template-columns:1fr 1fr}
+#deployDlg label{display:flex;flex-direction:column;gap:4px}
+#deployDlg input,#deployDlg select,#deployDlg textarea{padding:10px 12px}
+#deployDlg textarea{font:.85rem ui-monospace,monospace;resize:vertical}
+.wide{grid-column:1/-1}
+.pct{font:700 3.2rem/1 var(--serif);letter-spacing:-.02em}
+.bar{height:12px;border-radius:99px;background:var(--sand);overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--sienna);border-radius:99px;transition:width .6s ease}
+@media (max-width:480px){#deployDlg .grid{grid-template-columns:1fr}}

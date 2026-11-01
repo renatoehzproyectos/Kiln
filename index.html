@@ -35,7 +35,10 @@
       </div>
 
       <div class="repos">
-        <input id="q" type="search" placeholder="Find a repo, most recently pushed first" autocomplete="off" />
+        <div class="repoHead">
+          <input id="q" type="search" placeholder="Find a repo, most recently pushed first" autocomplete="off" />
+          <button id="newRepo" type="button" class="outline">+ New repo</button>
+        </div>
         <ul id="repoList" role="listbox"></ul>
       </div>
 
@@ -47,8 +50,68 @@
       </div>
 
       <button id="push" class="primary" disabled>Push</button>
+      <button id="deploy" type="button" class="outline wideBtn" disabled>Deploy to Vercel</button>
       <p id="status" role="status"></p>
+      <button id="undo" type="button" class="ghost" hidden></button>
     </section>
+
+    <dialog id="deployDlg">
+      <form method="dialog">
+        <div id="deployForm">
+          <h2>Deploy to Vercel</h2>
+          <p id="dRepo" class="hint-text"></p>
+          <div class="grid">
+            <label>Project name<input id="dName" type="text" spellcheck="false" /></label>
+            <label>Framework
+              <select id="dFramework">
+                <option value="">Other / static</option><option value="vite">Vite</option>
+                <option value="nextjs">Next.js</option><option value="create-react-app">Create React App</option>
+                <option value="astro">Astro</option><option value="nuxtjs">Nuxt</option>
+                <option value="remix">Remix</option><option value="gatsby">Gatsby</option>
+              </select></label>
+            <label>Branch<input id="dBranch" type="text" /></label>
+            <label>Root directory<input id="dRoot" type="text" placeholder="./" /></label>
+            <label>Install command<input id="dInstall" type="text" placeholder="Default" /></label>
+            <label>Build command<input id="dBuild" type="text" placeholder="Default" /></label>
+            <label class="wide">Output directory<input id="dOutput" type="text" placeholder="Default" /></label>
+            <label class="wide">Environment variables<textarea id="dEnv" rows="3" placeholder="KEY=value, one per line" spellcheck="false"></textarea></label>
+          </div>
+          <p id="dMsg" class="msg" role="status"></p>
+          <div class="actions">
+            <button value="cancel" class="ghost">Cancel</button>
+            <button id="dGo" type="button" class="danger">Deploy</button>
+          </div>
+        </div>
+        <div id="deployRun" hidden>
+          <h2 id="runTitle">Deploying…</h2>
+          <div class="pct" id="pct">0%</div>
+          <div class="bar"><i id="barFill"></i></div>
+          <p id="runStage" class="hint-text"></p>
+          <p id="runMsg" class="msg" role="status"></p>
+          <div id="runActions" class="actions" hidden>
+            <button id="runOk" value="ok" class="ghost">OK</button>
+            <button id="goApp" type="button" class="danger">Redirect me to the deployed app</button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="newRepoDlg">
+      <form method="dialog">
+        <h2>New repo</h2>
+        <label for="repoName">Name</label>
+        <input id="repoName" type="search" placeholder="my-project" autocomplete="off" spellcheck="false" />
+        <div class="modes">
+          <label><input type="radio" name="vis" value="private" checked /><span><b>Private</b><small>Only you and collaborators.</small></span></label>
+          <label><input type="radio" name="vis" value="public" /><span><b>Public</b><small>Visible to everyone.</small></span></label>
+        </div>
+        <p id="newRepoMsg" class="msg" role="status"></p>
+        <div class="actions">
+          <button value="cancel" class="ghost">Cancel</button>
+          <button id="createRepo" type="button" class="danger">Create &amp; push</button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog id="settings">
       <form method="dialog">
@@ -57,7 +120,12 @@
         <input id="token" type="password" placeholder="github_pat_…" autocomplete="off" spellcheck="false" />
         <a class="hint" target="_blank" rel="noopener"
            href="https://github.com/settings/personal-access-tokens/new">Create a fine-grained token with “Contents: read and write”</a>
-        <p class="hint-text">Saved in this browser only. It is sent to GitHub and nowhere else.</p>
+        <p class="hint-text">Saved in this browser only. It is sent to GitHub and nowhere else. Creating repos needs a token that is allowed to (a classic token with the “repo” scope works).</p>
+        <label for="vtoken">Vercel token (optional, for deploys)</label>
+        <input id="vtoken" type="password" placeholder="vcp_…" autocomplete="off" spellcheck="false" />
+        <input id="vteam" type="text" placeholder="Vercel team ID (optional, team_…)" autocomplete="off" spellcheck="false" />
+        <a class="hint" target="_blank" rel="noopener" href="https://vercel.com/account/tokens">Create a Vercel token</a>
+        <p class="hint-text">Vercel calls go through this app’s own /api/vercel function. Clear the field and save to remove the token.</p>
         <p id="settingsMsg" role="status"></p>
         <div class="actions">
           <button id="removeToken" type="button" class="ghost">Remove token</button>

@@ -25,8 +25,14 @@ async function pool(items, size, fn) {
 
 export async function plan(gh, repo, files, mode) {
   const base = `/repos/${repo.full_name}`;
-  const ref = await gh.get(`${base}/git/ref/heads/${repo.default_branch}`)
-    .catch(() => { throw new Error('This repo has no commits yet. Add a README on GitHub first, then try again.'); });
+  let ref;
+  for (let i = 0; i < 4; i++) {  // a just-created repo can take a moment to appear
+    try { ref = await gh.get(`${base}/git/ref/heads/${repo.default_branch}`); break; }
+    catch (e) {
+      if (i === 3 || !repo.fresh) throw new Error('This repo has no commits yet. Add a README on GitHub first, then try again.');
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
   const head = ref.object.sha;
   const commit = await gh.get(`${base}/git/commits/${head}`);
   const tree = await gh.get(`${base}/git/trees/${commit.tree.sha}?recursive=1`);
@@ -56,4 +62,12 @@ export async function execute(gh, p, message, onProgress) {
   const c = await gh.post(`${p.base}/git/commits`, { message, tree: t.sha, parents: [p.head] });
   await gh.patch(`${p.base}/git/refs/heads/${p.branch}`, { sha: c.sha });
   return c;
+}
+
+/** Reset the branch to where it was before a push. Refuses if the branch has moved on. */
+export async function undo(gh, rec) {
+  const base = `/repos/${rec.full}`;
+  const ref = await gh.get(`${base}/git/ref/heads/${rec.branch}`);
+  if (ref.object.sha !== rec.head) throw new Error('The branch has new commits since this push, so Kiln will not reset it.');
+  await gh.patch(`${base}/git/refs/heads/${rec.branch}`, { sha: rec.prev, force: true });
 }

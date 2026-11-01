@@ -2,12 +2,21 @@ import './styles/theme.css';
 import './styles/app.css';
 import { GitHub } from './lib/github.js';
 import { readZip, rootCandidates, filesUnder } from './lib/zip.js';
-import { plan, execute } from './lib/push.js';
+import { Vercel, deploy, guessFramework } from './lib/vercel.js';
+import { plan, execute, undo as undoPush } from './lib/push.js';
 
 const $ = (s) => document.querySelector(s);
-const KEY = 'kiln.token';
+const KEY = 'kiln.token', VK = 'kiln.vtoken', VT = 'kiln.vteam';
 const s = { gh: null, zip: null, zipName: '', repos: [], repo: null, mode: 'update', busy: false };
 
+const curMode = () => (s.repo?.fresh ? 'replace' : s.mode);   // a brand-new repo only has our README
+const UK = 'kiln.undo';
+const undoStore = {
+  all() { try { return JSON.parse(localStorage.getItem(UK)) || {}; } catch { return {}; } },
+  get(f) { return this.all()[f]; },
+  set(f, r) { const a = this.all(); a[f] = r; localStorage.setItem(UK, JSON.stringify(a)); },
+  del(f) { const a = this.all(); delete a[f]; localStorage.setItem(UK, JSON.stringify(a)); },
+};
 const say = (msg, kind = '') => { const el = $('#status'); el.className = kind; el.innerHTML = msg; };
 const esc = (t) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
@@ -27,6 +36,8 @@ const dlg = $('#settings');
 const note = (msg, kind = '') => { const el = $('#settingsMsg'); el.textContent = msg; el.className = kind; };
 function openSettings(msg = '') {
   $('#token').value = localStorage.getItem(KEY) || '';
+  $('#vtoken').value = localStorage.getItem(VK) || '';
+  $('#vteam').value = localStorage.getItem(VT) || '';
   note(msg); dlg.showModal(); $('#token').focus();
 }
 async function connect(token) {
@@ -49,6 +60,12 @@ $('#saveToken').onclick = async () => {
   if (!token) return note('Paste a token first.', 'error');
   const btn = $('#saveToken'); btn.disabled = true; btn.textContent = 'Checking…';
   try {
+    const vt = $('#vtoken').value.trim(), team = $('#vteam').value.trim();
+    if (vt) {
+      const vc = new Vercel(vt, team);
+      try { await vc.me(); } catch (e) { throw new Error(`Vercel token: ${e.message}`); }
+      s.vc = vc; localStorage.setItem(VK, vt); localStorage.setItem(VT, team);
+    } else { s.vc = null; localStorage.removeItem(VK); localStorage.removeItem(VT); }
     await connect(token);
     localStorage.setItem(KEY, token);
     dlg.close(); $('#q').focus();
@@ -108,8 +125,10 @@ function refresh() {
   const n = s.zip ? currentFiles().size : 0;
   $('#push').disabled = !ready || n === 0;
   $('#push').textContent = s.zip && s.repo
-    ? `${s.mode === 'replace' ? 'Replace' : 'Update'} ${s.repo.name} with ${n} file${n === 1 ? '' : 's'}`
+    ? s.repo.fresh ? `Push ${n} file${n === 1 ? '' : 's'} to ${s.repo.name}` : `${curMode() === 'replace' ? 'Replace' : 'Update'} ${s.repo.name} with ${n} file${n === 1 ? '' : 's'}`
     : 'Push';
+  $('#deploy').disabled = !s.repo || s.busy;
+  renderUndo();
   if (s.zip && n === 0) say('No files under that root.', 'error');
 }
 
@@ -123,10 +142,12 @@ const confirmDeletes = (list) => new Promise((resolve) => {
 $('#push').onclick = async () => {
   s.busy = true; refresh(); say('Reading repo…');
   try {
-    const p = await plan(s.gh, s.repo, currentFiles(), s.mode);
+    const p = await plan(s.gh, s.repo, currentFiles(), curMode());
     if (!p.changes) return say('Already up to date. Nothing to push.', 'ok');
-    if (p.deletions.length && !(await confirmDeletes(p.deletions))) return say('Cancelled. Nothing was changed.');
+    if (p.deletions.length && !s.repo.fresh && !(await confirmDeletes(p.deletions))) return say('Cancelled. Nothing was changed.');
     const c = await execute(s.gh, p, `Sync from ${s.zipName}`, (d, t) => say(`Uploading ${d} of ${t}…`));
+    undoStore.set(s.repo.full_name, { full: s.repo.full_name, branch: p.branch, prev: p.head, head: c.sha, at: Date.now() });
+    s.repo.fresh = false;
     say(`Pushed to ${esc(s.repo.default_branch)}. <a target="_blank" rel="noopener" href="${c.html_url}">View commit</a>`, 'ok');
     s.repo.pushed_at = new Date().toISOString();
     s.repos.sort((a, b) => new Date(b.pushed_at) - new Date(a.pushed_at));
@@ -135,7 +156,97 @@ $('#push').onclick = async () => {
   finally { s.busy = false; refresh(); }
 };
 
+/* ---------- new repo ---------- */
+const nrd = $('#newRepoDlg');
+const slug = (n) => n.replace(/\.zip$/i, '').toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+const nrNote = (t) => { $('#newRepoMsg').textContent = t; };
+$('#newRepo').onclick = () => {
+  $('#repoName').value = s.zipName ? slug(s.zipName) : '';
+  $('#createRepo').textContent = s.zip ? 'Create & push' : 'Create repo';
+  nrNote(''); nrd.showModal(); $('#repoName').select();
+};
+$('#repoName').onkeydown = (e) => e.key === 'Enter' && (e.preventDefault(), $('#createRepo').click());
+$('#createRepo').onclick = async () => {
+  const name = $('#repoName').value.trim();
+  if (!name) return nrNote('Give the repo a name.');
+  const btn = $('#createRepo'), label = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Creating…';
+  try {
+    const isPrivate = document.querySelector('input[name=vis]:checked').value === 'private';
+    const r = await s.gh.createRepo(name, isPrivate);
+    r.fresh = true;
+    s.repos.unshift(r); s.repo = r; $('#q').value = '';
+    renderRepos(); refresh(); nrd.close();
+    if (s.zip) $('#push').click();
+  } catch (e) { nrNote(e.message); }
+  finally { btn.disabled = false; btn.textContent = label; }
+};
+
+/* ---------- undo ---------- */
+function renderUndo() {
+  const b = $('#undo'), rec = s.repo && undoStore.get(s.repo.full_name);
+  delete b.dataset.armed;
+  b.hidden = !rec;
+  if (rec) b.textContent = `Undo last push to ${s.repo.name} (${ago(new Date(rec.at).toISOString())})`;
+}
+$('#undo').onclick = async () => {
+  const b = $('#undo'), rec = undoStore.get(s.repo.full_name);
+  if (!rec) return;
+  if (!b.dataset.armed) {            // two clicks: arm, then confirm
+    b.dataset.armed = '1'; b.textContent = 'Click again to reset the branch';
+    setTimeout(() => b.dataset.armed && renderUndo(), 4000);
+    return;
+  }
+  b.disabled = true; say('Undoing…');
+  try {
+    await undoPush(s.gh, rec);
+    undoStore.del(rec.full);
+    say(`Undone. ${esc(rec.branch)} is back at ${rec.prev.slice(0, 7)}.`, 'ok');
+  } catch (e) { say(esc(e.message), 'error'); }
+  finally { b.disabled = false; renderUndo(); }
+};
+
+/* ---------- deploy to Vercel ---------- */
+const dd = $('#deployDlg');
+let deploying = false;
+dd.addEventListener('cancel', (e) => deploying && e.preventDefault());
+$('#deploy').onclick = () => {
+  if (!s.vc) return openSettings('Add a Vercel token to deploy.');
+  const r = s.repo;
+  $('#deployForm').hidden = false; $('#deployRun').hidden = true; $('#dMsg').textContent = '';
+  $('#dRepo').textContent = r.full_name;
+  $('#dName').value = r.name.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/-{3,}/g, '--').slice(0, 100);
+  $('#dBranch').value = r.default_branch;
+  for (const id of ['dRoot', 'dInstall', 'dBuild', 'dOutput', 'dEnv']) $('#' + id).value = '';
+  $('#dFramework').value = '';
+  dd.showModal();
+  guessFramework(s.gh, r).then((f) => { if (f && !deploying) $('#dFramework').value = f; }).catch(() => {});
+};
+$('#dGo').onclick = async () => {
+  const v = (id) => $('#' + id).value.trim();
+  if (!v('dName')) return ($('#dMsg').textContent = 'Give the project a name.');
+  const env = v('dEnv').split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'))
+    .map((l) => { const i = l.indexOf('='); return i > 0 ? [l.slice(0, i).trim(), l.slice(i + 1)] : null; });
+  if (env.includes(null)) return ($('#dMsg').textContent = 'Environment variables must look like KEY=value.');
+  const cfg = { name: v('dName'), framework: v('dFramework'), branch: v('dBranch') || s.repo.default_branch,
+    root: v('dRoot').replace(/^\.\/?$/, ''), install: v('dInstall'), build: v('dBuild'), output: v('dOutput'), env };
+
+  $('#deployForm').hidden = true; $('#deployRun').hidden = false; $('#runActions').hidden = true;
+  $('#runTitle').textContent = 'Deploying…'; $('#runMsg').textContent = '';
+  const show = (p, label) => { $('#pct').textContent = `${p}%`; $('#barFill').style.width = `${p}%`; $('#runStage').textContent = label; };
+  show(0, 'Starting…'); deploying = true;
+  try {
+    const url = await deploy(s.vc, s.repo, cfg, show);
+    $('#runTitle').textContent = 'Deployed'; $('#runOk').textContent = 'OK';
+    $('#goApp').hidden = false; $('#goApp').onclick = () => location.assign(url);
+  } catch (e) {
+    $('#runTitle').textContent = 'Deployment failed'; $('#runMsg').textContent = e.message;
+    $('#runOk').textContent = 'Close'; $('#goApp').hidden = true;
+  } finally { deploying = false; $('#runActions').hidden = false; }
+};
+
 /* ---------- boot ---------- */
+{ const vt = localStorage.getItem(VK); if (vt) s.vc = new Vercel(vt, localStorage.getItem(VT) || ''); }
 const saved = localStorage.getItem(KEY);
 if (saved) connect(saved).catch((e) => { disconnect(); openSettings(`Saved token failed: ${e.message}`); });
 else { $('#needToken').hidden = false; openSettings(); }

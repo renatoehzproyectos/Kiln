@@ -25,6 +25,9 @@ export class GitHub {
   post = (p, b) => this.request('POST', p, b);
   patch = (p, b) => this.request('PATCH', p, b);
 
+  /** New repo with an initial commit, so the Git Data API can write to it. */
+  createRepo = (name, isPrivate) => this.post('/user/repos', { name, private: isPrivate, auto_init: true });
+
   /** Repos you can push to, most recently pushed first. */
   async repos() {
     const all = [];
