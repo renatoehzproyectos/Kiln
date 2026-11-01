@@ -2,7 +2,7 @@ import './styles/theme.css';
 import './styles/app.css';
 import { GitHub } from './lib/github.js';
 import { readZip, rootCandidates, filesUnder } from './lib/zip.js';
-import { Supabase, setupLogin, planSteps } from './lib/supabase.js';
+import { Supabase, setupLogin, planSteps, finishSetup, finishSteps } from './lib/supabase.js';
 import { Vercel, deploy, guessFramework } from './lib/vercel.js';
 import { plan, execute, undo as undoPush } from './lib/push.js';
 
@@ -246,6 +246,7 @@ $('#dGo').onclick = async () => {
   try {
     const url = await deploy(s.vc, s.repo, cfg, show);
     $('#runTitle').textContent = 'Deployed'; $('#runOk').textContent = 'OK';
+    localStorage.setItem('kiln.lasturl', url);
     $('#goApp').hidden = false; $('#goApp').onclick = () => location.assign(url);
   } catch (e) {
     $('#runTitle').textContent = 'Deployment failed'; $('#runMsg').textContent = e.message;
@@ -322,6 +323,7 @@ $('#sGo').onclick = async () => {
   sbRunning = true;
   try {
     const r = await setupLogin(s.sb, s.vc, cfg, step);
+    localStorage.setItem('kiln.sbref', r.ref);
     const P = cfg.prefix;
     $('#sOut').textContent = `${P}SUPABASE_URL=${r.url}\n${P}SUPABASE_ANON_KEY=${r.anon}` +
       (cfg.create ? `\n# Database password: ${cfg.dbPass}` : '') +
@@ -333,6 +335,64 @@ $('#sGo').onclick = async () => {
   finally { sbRunning = false; $('#sRunActions').hidden = false; }
 };
 $('#sCopy').onclick = async () => { await navigator.clipboard.writeText($('#sOut').textContent); $('#sCopy').textContent = 'Copied'; setTimeout(() => ($('#sCopy').textContent = 'Copy'), 1500); };
+
+/* ---------- Finish setup (functions, secrets, SMTP, URLs) ---------- */
+const fd = $('#fnDlg');
+let fnRunning = false;
+fd.addEventListener('cancel', (e) => fnRunning && e.preventDefault());
+const zipFunctions = () => {
+  if (!s.zip) return [];
+  const root = $('#rootSel').value, base = root + 'supabase/functions/', by = {};
+  for (const [p, d] of s.zip) {
+    if (!p.startsWith(base)) continue;
+    const [slug, ...rest] = p.slice(base.length).split('/');
+    if (!rest.length || slug.startsWith('_')) continue;
+    (by[slug] ||= []).push({ name: rest.join('/'), content: new TextDecoder().decode(d) });
+  }
+  return Object.entries(by).filter(([, f]) => f.some((x) => x.name === 'index.ts')).map(([slug, files]) => ({ slug, files }));
+};
+$('#fnOpen').onclick = async () => {
+  if (!s.sb) return openSettings('Add a Supabase token first.');
+  $('#fnForm').hidden = false; $('#fnRun').hidden = true; $('#fMsg').textContent = '';
+  const fns = zipFunctions();
+  $('#fFnRow').hidden = !fns.length;
+  $('#fFnText').textContent = `Deploy ${fns.length} function${fns.length > 1 ? 's' : ''} from the zip (${fns.map((f) => f.slug).join(', ')})`;
+  if (!$('#fSite').value) $('#fSite').value = localStorage.getItem('kiln.lasturl') || '';
+  fd.showModal();
+  try {
+    const projects = await s.sb.projects(), last = localStorage.getItem('kiln.sbref');
+    $('#fProject').innerHTML = projects.map((p) => `<option value="${esc(p.id)}"${p.id === last ? ' selected' : ''}>${esc(p.name)} (${esc(p.region)})</option>`).join('');
+  } catch (e) { $('#fMsg').textContent = e.message; }
+};
+$('#fGo').onclick = async () => {
+  const v = (id) => $('#' + id).value.trim(), msg = (t) => { $('#fMsg').textContent = t; };
+  const functions = !$('#fFnRow').hidden && $('#fFn').checked ? zipFunctions() : [];
+  const c = { ref: v('fProject'), siteUrl: v('fSite'), redirects: v('fRedirects'), functions,
+    resendKey: v('fKey'), fromEmail: v('fFrom'), smtp: $('#fSmtp').checked };
+  if (!c.ref) return msg('Pick a project.');
+  if (c.siteUrl && !/^https?:\/\//.test(c.siteUrl)) return msg('The app URL must start with https://');
+  if (c.resendKey && (!c.fromEmail || c.fromEmail.includes('yourdomain.com'))) return msg('Write your real From address (a domain you verified in Resend).');
+  if (c.resendKey && !c.siteUrl) return msg('APP_URL is needed for invitation links: enter your app’s URL.');
+  const steps = finishSteps(c);
+  if (!steps.length) return msg('Nothing to do: fill in at least one section.');
+
+  $('#fnForm').hidden = true; $('#fnRun').hidden = false; $('#fRunActions').hidden = true;
+  $('#fRunMsg').textContent = ''; $('#fRunTitle').textContent = 'Working…';
+  $('#fSteps').innerHTML = steps.map(([k, l]) => `<li data-k="${k}"><i>○</i><span>${esc(l)}</span><small></small></li>`).join('');
+  const mark = { run: '…', ok: '✓', fail: '✗' };
+  const step = (k, state, detail = '') => {
+    const li = document.querySelector(`#fSteps li[data-k=${k}]`);
+    li.className = state; li.querySelector('i').textContent = mark[state]; li.querySelector('small').textContent = detail;
+  };
+  fnRunning = true;
+  try {
+    await finishSetup(s.sb, c, step);
+    localStorage.setItem('kiln.sbref', c.ref);
+    $('#fRunTitle').textContent = 'All set';
+    $('#fRunMsg').textContent = 'Open the app’s Consola button and sign in to re-check everything.';
+  } catch (e) { $('#fRunTitle').textContent = 'Stopped'; $('#fRunMsg').textContent = e.message; }
+  finally { fnRunning = false; $('#fRunActions').hidden = false; }
+};
 
 /* ---------- boot ---------- */
 { const st = localStorage.getItem(SK); if (st) s.sb = new Supabase(st); }

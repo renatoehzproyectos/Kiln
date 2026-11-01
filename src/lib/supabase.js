@@ -24,6 +24,18 @@ export class Supabase {
   createProject = (b) => this.request('POST', '/v1/projects', b);
   keys = (ref) => this.request('GET', `/v1/projects/${ref}/api-keys`);
   query = (ref, query) => this.request('POST', `/v1/projects/${ref}/database/query`, { query });
+  secrets = (ref, list) => this.request('POST', `/v1/projects/${ref}/secrets`, list);
+  functions = (ref) => this.request('GET', `/v1/projects/${ref}/functions`);
+  async deployFunction(ref, slug, files) {
+    const res = await fetch('/api/supabase-deploy', {
+      method: 'POST',
+      headers: { 'x-supabase-token': this.token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ref, slug, files, verify_jwt: true }),
+    }).catch(() => { throw new Error('Could not reach /api/supabase-deploy. Use the deployed app or `vercel dev`.'); });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.message || j.error || `Supabase ${res.status}`);
+    return j;
+  }
   patchAuth = (ref, b) => this.request('PATCH', `/v1/projects/${ref}/config/auth`, b);
 }
 
@@ -123,4 +135,56 @@ export async function setupLogin(sb, vc, cfg, step) {
     } catch { /* shown in the checklist; the keys below still work */ }
   }
   return { ref, url, anon, vercelOk };
+}
+
+/* ---- Finish setup: edge functions, secrets, email (SMTP) and auth URLs ---- */
+export const finishSteps = (c) => [
+  c.functions.length && ['fn', `Deploy function${c.functions.length > 1 ? 's' : ''}: ${c.functions.map((f) => f.slug).join(', ')}`],
+  c.resendKey && ['secrets', 'Set secrets RESEND_API_KEY, FROM_EMAIL and APP_URL'],
+  c.resendKey && c.smtp && ['smtp', 'Use Resend as the project’s email (SMTP)'],
+  c.siteUrl && ['urls', 'Set Site URL and Redirect URLs'],
+  c.functions.length && ['verify', 'Check the functions are live'],
+].filter(Boolean);
+
+export async function finishSetup(sb, c, step) {
+  const run = async (key, fn) => {
+    step(key, 'run');
+    try { const r = await fn(); step(key, 'ok'); return r; }
+    catch (e) { step(key, 'fail', e.message); throw e; }
+  };
+  const app = c.siteUrl ? c.siteUrl.replace(/\/*$/, '/') : '';
+  if (c.functions.length) {
+    await run('fn', async () => { for (const f of c.functions) await sb.deployFunction(c.ref, f.slug, f.files); });
+  }
+  if (c.resendKey) {
+    await run('secrets', () => sb.secrets(c.ref, [
+      { name: 'RESEND_API_KEY', value: c.resendKey },
+      { name: 'FROM_EMAIL', value: c.fromEmail },
+      ...(app ? [{ name: 'APP_URL', value: app }] : []),
+    ]));
+    if (c.smtp) {
+      const m = c.fromEmail.match(/^\s*(.*?)\s*<([^>]+)>\s*$/);
+      await run('smtp', () => sb.patchAuth(c.ref, {
+        smtp_host: 'smtp.resend.com', smtp_port: '465', smtp_user: 'resend', smtp_pass: c.resendKey,
+        smtp_admin_email: m ? m[2] : c.fromEmail.trim(), smtp_sender_name: (m && m[1]) || 'OBRA360',
+      }));
+    }
+  }
+  if (c.siteUrl) {
+    const origin = app.replace(/\/$/, '');
+    await run('urls', () => sb.patchAuth(c.ref, {
+      site_url: origin,
+      uri_allow_list: [...new Set([origin, `${origin}/**`, ...c.redirects.split(',').map((x) => x.trim()).filter(Boolean)])].join(','),
+    }));
+  }
+  if (c.functions.length) {
+    await run('verify', async () => {
+      const live = await sb.functions(c.ref);
+      for (const f of c.functions) {
+        const hit = live.find((x) => x.slug === f.slug);
+        if (!hit) throw new Error(`“${f.slug}” is not listed in the project.`);
+        if (hit.status && hit.status !== 'ACTIVE') throw new Error(`“${f.slug}” status: ${hit.status}`);
+      }
+    });
+  }
 }

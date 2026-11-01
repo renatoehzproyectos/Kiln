@@ -52,6 +52,7 @@
       <button id="push" class="primary" disabled>Push</button>
       <button id="deploy" type="button" class="outline wideBtn" disabled>Deploy to Vercel</button>
       <button id="sbOpen" type="button" class="outline wideBtn">Set up login with Supabase</button>
+      <button id="fnOpen" type="button" class="outline wideBtn">Finish setup: functions, email, URLs</button>
       <p id="status" role="status"></p>
       <button id="undo" type="button" class="ghost" hidden></button>
     </section>
@@ -136,6 +137,33 @@
             <button id="sCopy" type="button" class="outline">Copy</button>
           </div>
           <div id="sRunActions" class="actions" hidden><button value="ok" class="danger">Done</button></div>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="fnDlg" class="fdlg">
+      <form method="dialog">
+        <div id="fnForm">
+          <h2>Finish setup</h2>
+          <p class="hint-text">Deploy functions, connect email and set the login URLs on an existing project.</p>
+          <div class="grid">
+            <label class="wide">Supabase project<select id="fProject"></select></label>
+            <label class="wide">Your app’s URL (Site URL and APP_URL)<input id="fSite" type="text" placeholder="https://obra360-nine.vercel.app" /></label>
+            <label class="wide">Extra redirect URLs<input id="fRedirects" type="text" value="http://localhost:8080/**,http://localhost:5173/**" /></label>
+            <label id="fFnRow" class="check wide" hidden><input id="fFn" type="checkbox" checked /> <span id="fFnText"></span></label>
+            <label class="wide">Resend API key (re_…)<input id="fKey" type="password" autocomplete="off" spellcheck="false" placeholder="Leave empty to skip email" /></label>
+            <label class="wide">From address<input id="fFrom" type="text" value="OBRA360 &lt;no-reply@yourdomain.com&gt;" spellcheck="false" /></label>
+            <label class="check wide"><input id="fSmtp" type="checkbox" checked /> Also send Supabase’s own emails (confirm, reset) through Resend</label>
+          </div>
+          <p class="hint-text">The domain in the From address must be verified in Resend (DNS records), otherwise Resend only delivers to your own account. Kiln can’t do that part.</p>
+          <p id="fMsg" class="msg" role="status"></p>
+          <div class="actions"><button value="cancel" class="ghost">Cancel</button><button id="fGo" type="button" class="danger">Finish setup</button></div>
+        </div>
+        <div id="fnRun" hidden>
+          <h2 id="fRunTitle">Working…</h2>
+          <ul id="fSteps" class="steps"></ul>
+          <p id="fRunMsg" class="msg" role="status"></p>
+          <div id="fRunActions" class="actions" hidden><button value="ok" class="danger">Done</button></div>
         </div>
       </form>
     </dialog>
