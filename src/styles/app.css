@@ -73,13 +73,26 @@ dialog{width:min(560px,92vw)}
 #newRepoDlg input[type=search]{-webkit-appearance:none}
 
 .wideBtn{width:100%;height:48px}.wideBtn:disabled{opacity:.5;cursor:not-allowed}
-#deployDlg form>div,#deployDlg .grid{display:flex;flex-direction:column;gap:12px}
-#deployDlg .grid{display:grid;grid-template-columns:1fr 1fr}
-#deployDlg label{display:flex;flex-direction:column;gap:4px}
-#deployDlg input,#deployDlg select,#deployDlg textarea{padding:10px 12px}
-#deployDlg textarea{font:.85rem ui-monospace,monospace;resize:vertical}
+.fdlg form>div,.fdlg .grid{display:flex;flex-direction:column;gap:12px}
+.fdlg .grid{display:grid;grid-template-columns:1fr 1fr}
+.fdlg label{display:flex;flex-direction:column;gap:4px}
+.fdlg input,.fdlg select,.fdlg textarea{padding:10px 12px}
+.fdlg textarea{font:.85rem ui-monospace,monospace;resize:vertical}
 .wide{grid-column:1/-1}
 .pct{font:700 3.2rem/1 var(--serif);letter-spacing:-.02em}
 .bar{height:12px;border-radius:99px;background:var(--sand);overflow:hidden}
 .bar i{display:block;height:100%;width:0;background:var(--sienna);border-radius:99px;transition:width .6s ease}
-@media (max-width:480px){#deployDlg .grid{grid-template-columns:1fr}}
+@media (max-width:480px){.fdlg .grid{grid-template-columns:1fr}}
+
+.fdlg{max-height:92vh;overflow:auto}
+.fdlg .check{flex-direction:row;align-items:center;flex-wrap:wrap;gap:8px;color:var(--ink)}
+.fdlg .check input[type=checkbox]{accent-color:var(--sienna);width:18px;height:18px}
+.fdlg .check input[type=text]{flex:1;min-width:140px}
+.fdlg .grid .grid{padding:0}
+code{font-family:ui-monospace,monospace;background:var(--paper);padding:1px 5px;border-radius:5px}
+.steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.steps li{display:flex;flex-wrap:wrap;gap:8px;color:var(--umber)}
+.steps i{font-style:normal;width:1.2em;text-align:center}
+.steps li.run{color:var(--ink);font-weight:600}.steps li.ok{color:var(--ink)}.steps li.ok i{color:var(--sienna-deep)}
+.steps li.fail{color:#a3321b}.steps small{flex-basis:100%;padding-left:2em;overflow-wrap:anywhere}
+#sOut{margin:0 0 8px;padding:12px;background:var(--paper);border-radius:10px;font:.78rem/1.5 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;max-height:34vh;overflow:auto}

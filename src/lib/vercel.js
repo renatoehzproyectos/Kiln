@@ -19,6 +19,8 @@ export class Vercel {
     return j;
   }
 
+  setEnv = (id, key, value) => this.request('POST', `/v10/projects/${id}/env?upsert=true`,
+    { key, value, type: 'encrypted', target: ['production', 'preview', 'development'] });
   me = () => this.request('GET', '/v2/user');
   project = (name) => this.request('GET', `/v9/projects/${encodeURIComponent(name)}`).catch((e) => { if (e.status === 404) return null; throw e; });
   createProject = (b) => this.request('POST', '/v11/projects', b);

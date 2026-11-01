@@ -44,3 +44,6 @@ Limits: empty repos (no commits) aren't supported; files over ~100 MB are reject
 
 ## Deploy to Vercel
 Add a Vercel token in Settings, pick a repo, press **Deploy to Vercel**, review the settings, deploy. The Vercel GitHub app must be installed for the repo's owner. `api/vercel.js` only runs on Vercel (or `vercel dev`).
+
+## Supabase login
+Add a Supabase access token in Settings, then **Set up login with Supabase**: create (or pick) a project, wait for it to be healthy, create a `profiles` table with row-level security and a signup trigger, set site URL / redirects / email confirmation, fetch the public anon key, and optionally write `*_SUPABASE_URL` and `*_SUPABASE_ANON_KEY` to a Vercel project. The service_role key is never read. Uses `api/supabase.js`, a proxy like the Vercel one.

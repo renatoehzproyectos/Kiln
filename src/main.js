@@ -2,11 +2,12 @@ import './styles/theme.css';
 import './styles/app.css';
 import { GitHub } from './lib/github.js';
 import { readZip, rootCandidates, filesUnder } from './lib/zip.js';
+import { Supabase, setupLogin, planSteps } from './lib/supabase.js';
 import { Vercel, deploy, guessFramework } from './lib/vercel.js';
 import { plan, execute, undo as undoPush } from './lib/push.js';
 
 const $ = (s) => document.querySelector(s);
-const KEY = 'kiln.token', VK = 'kiln.vtoken', VT = 'kiln.vteam';
+const KEY = 'kiln.token', VK = 'kiln.vtoken', VT = 'kiln.vteam', SK = 'kiln.sbtoken';
 const s = { gh: null, zip: null, zipName: '', repos: [], repo: null, mode: 'update', busy: false };
 
 const curMode = () => (s.repo?.fresh ? 'replace' : s.mode);   // a brand-new repo only has our README
@@ -38,6 +39,7 @@ function openSettings(msg = '') {
   $('#token').value = localStorage.getItem(KEY) || '';
   $('#vtoken').value = localStorage.getItem(VK) || '';
   $('#vteam').value = localStorage.getItem(VT) || '';
+  $('#sbtoken').value = localStorage.getItem(SK) || '';
   note(msg); dlg.showModal(); $('#token').focus();
 }
 async function connect(token) {
@@ -66,6 +68,12 @@ $('#saveToken').onclick = async () => {
       try { await vc.me(); } catch (e) { throw new Error(`Vercel token: ${e.message}`); }
       s.vc = vc; localStorage.setItem(VK, vt); localStorage.setItem(VT, team);
     } else { s.vc = null; localStorage.removeItem(VK); localStorage.removeItem(VT); }
+    const st = $('#sbtoken').value.trim();
+    if (st) {
+      const sb = new Supabase(st);
+      try { await sb.orgs(); } catch (e) { throw new Error(`Supabase token: ${e.message}`); }
+      s.sb = sb; localStorage.setItem(SK, st);
+    } else { s.sb = null; localStorage.removeItem(SK); }
     await connect(token);
     localStorage.setItem(KEY, token);
     dlg.close(); $('#q').focus();
@@ -245,7 +253,89 @@ $('#dGo').onclick = async () => {
   } finally { deploying = false; $('#runActions').hidden = false; }
 };
 
+/* ---------- Supabase login setup ---------- */
+const sd = $('#sbDlg');
+let sbRunning = false;
+sd.addEventListener('cancel', (e) => sbRunning && e.preventDefault());
+const randPass = () => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(18)))).replace(/[+/=]/g, 'x');
+const PREFIX = { nextjs: 'NEXT_PUBLIC_', 'create-react-app': 'REACT_APP_', astro: 'PUBLIC_' };
+const toggleNew = () => { $('#sNew').hidden = !!$('#sProject').value; };
+$('#sProject').onchange = toggleNew;
+
+$('#sbOpen').onclick = async () => {
+  if (!s.sb) return openSettings('Add a Supabase token to set up login.');
+  $('#sbForm').hidden = false; $('#sbRun').hidden = true; $('#sMsg').textContent = '';
+  $('#sName').value = s.zipName ? slug(s.zipName) : (s.repo?.name || '');
+  $('#sPass').value = randPass();
+  const zname = s.zipName ? slug(s.zipName) : '';
+  $('#sVercelName').value = (s.repo?.name || zname).toLowerCase();
+  if (zname && !$('#sSite').value) $('#sSite').value = `https://${zname}.vercel.app`;
+  const root = s.zip ? $('#rootSel').value : '';
+  const sqls = s.zip ? [...s.zip.keys()].filter((p) => p.startsWith(root + 'supabase/migrations/') && p.endsWith('.sql')).sort() : [];
+  const hasCfg = !!s.zip?.has(root + 'config.js');
+  $('#sMigrateRow').hidden = !sqls.length;
+  $('#sMigrateText').textContent = `Run ${sqls.length} SQL migration${sqls.length > 1 ? 's' : ''} from the zip (${sqls.map((p) => p.split('/').pop()).join(', ')})`;
+  $('#sPatchRow').hidden = !hasCfg;
+  if (sqls.length) $('#sProfiles').checked = false;   // the zip's own migration creates its profiles table
+  if (hasCfg) $('#sVercel').checked = false;           // a static site reads its keys from config.js
+  $('#sVercel').disabled = !s.vc; $('#sVercel').checked = !!s.vc;
+  sd.showModal();
+  try {
+    const [orgs, projects] = await Promise.all([s.sb.orgs(), s.sb.projects()]);
+    $('#sOrg').innerHTML = orgs.map((o) => `<option value="${esc(o.slug || o.id)}">${esc(o.name)}</option>`).join('');
+    $('#sProject').innerHTML = '<option value="">＋ Create a new project</option>' +
+      projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name)} (${esc(p.region)})</option>`).join('');
+    toggleNew();
+  } catch (e) { $('#sMsg').textContent = e.message; }
+  if (s.repo) guessFramework(s.gh, s.repo).then((f) => { $('#sPrefix').value = PREFIX[f] || 'VITE_'; }).catch(() => {});
+};
+
+$('#sGo').onclick = async () => {
+  const v = (id) => $('#' + id).value.trim(), msg = (t) => { $('#sMsg').textContent = t; };
+  const cfg = { create: !v('sProject'), ref: v('sProject'), name: v('sName'), org: v('sOrg'), region: v('sRegion'),
+    dbPass: v('sPass'), siteUrl: v('sSite'), redirects: v('sRedirects'), confirmEmail: $('#sConfirm').checked,
+    profiles: $('#sProfiles').checked, vercel: $('#sVercel').checked && !!s.vc, vercelName: v('sVercelName'), prefix: v('sPrefix') };
+  const root = s.zip ? $('#rootSel').value : '';
+  const sqlPaths = s.zip && $('#sMigrate').checked && !$('#sMigrateRow').hidden
+    ? [...s.zip.keys()].filter((p) => p.startsWith(root + 'supabase/migrations/') && p.endsWith('.sql')).sort() : [];
+  cfg.sqlFiles = sqlPaths.map((p) => ({ name: p.split('/').pop(), sql: new TextDecoder().decode(s.zip.get(p)) }));
+  if ($('#sPatch').checked && !$('#sPatchRow').hidden) {
+    cfg.patchName = 'config.js';
+    cfg.patchFile = (url, anon) => {
+      const text = new TextDecoder().decode(s.zip.get(root + 'config.js'))
+        .replace(/https:\/\/[a-z0-9]{20}\.supabase\.co/g, url).replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g, anon);
+      s.zip.set(root + 'config.js', new TextEncoder().encode(text));
+      refresh();
+    };
+  }
+  if (cfg.create && (!cfg.name || !cfg.org)) return msg('Give the project a name and pick an organization.');
+  if (cfg.vercel && !cfg.vercelName) return msg('Enter the Vercel project name, or untick that option.');
+
+  $('#sbForm').hidden = true; $('#sbRun').hidden = false; $('#sResult').hidden = true; $('#sRunActions').hidden = true;
+  $('#sRunMsg').textContent = ''; $('#sRunTitle').textContent = 'Setting up…';
+  $('#sSteps').innerHTML = planSteps(cfg).map(([k, l]) => `<li data-k="${k}"><i>○</i><span>${l}</span><small></small></li>`).join('');
+  const mark = { run: '…', ok: '✓', fail: '✗' };
+  const step = (k, state, detail = '') => {
+    const li = document.querySelector(`#sSteps li[data-k=${k}]`);
+    li.className = state; li.querySelector('i').textContent = mark[state]; li.querySelector('small').textContent = detail;
+  };
+  sbRunning = true;
+  try {
+    const r = await setupLogin(s.sb, s.vc, cfg, step);
+    const P = cfg.prefix;
+    $('#sOut').textContent = `${P}SUPABASE_URL=${r.url}\n${P}SUPABASE_ANON_KEY=${r.anon}` +
+      (cfg.create ? `\n# Database password: ${cfg.dbPass}` : '') +
+      `\n\n// npm i @supabase/supabase-js\nimport { createClient } from '@supabase/supabase-js'\nconst supabase = createClient(URL, ANON_KEY)\nawait supabase.auth.signUp({ email, password })\nawait supabase.auth.signInWithPassword({ email, password })\nawait supabase.auth.signOut()`;
+    $('#sResult').hidden = false; $('#sRunTitle').textContent = 'Login is ready';
+    if (cfg.vercel && r.vercelOk) $('#sRunMsg').textContent = 'Keys are in Vercel. Deploy again to use them.';
+    if (cfg.patchName) $('#sRunMsg').textContent = 'config.js is updated in the zip. Now create the repo or push.';
+  } catch (e) { $('#sRunTitle').textContent = 'Setup stopped'; $('#sRunMsg').textContent = e.message; }
+  finally { sbRunning = false; $('#sRunActions').hidden = false; }
+};
+$('#sCopy').onclick = async () => { await navigator.clipboard.writeText($('#sOut').textContent); $('#sCopy').textContent = 'Copied'; setTimeout(() => ($('#sCopy').textContent = 'Copy'), 1500); };
+
 /* ---------- boot ---------- */
+{ const st = localStorage.getItem(SK); if (st) s.sb = new Supabase(st); }
 { const vt = localStorage.getItem(VK); if (vt) s.vc = new Vercel(vt, localStorage.getItem(VT) || ''); }
 const saved = localStorage.getItem(KEY);
 if (saved) connect(saved).catch((e) => { disconnect(); openSettings(`Saved token failed: ${e.message}`); });

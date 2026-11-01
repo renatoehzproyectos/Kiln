@@ -51,11 +51,12 @@
 
       <button id="push" class="primary" disabled>Push</button>
       <button id="deploy" type="button" class="outline wideBtn" disabled>Deploy to Vercel</button>
+      <button id="sbOpen" type="button" class="outline wideBtn">Set up login with Supabase</button>
       <p id="status" role="status"></p>
       <button id="undo" type="button" class="ghost" hidden></button>
     </section>
 
-    <dialog id="deployDlg">
+    <dialog id="deployDlg" class="fdlg">
       <form method="dialog">
         <div id="deployForm">
           <h2>Deploy to Vercel</h2>
@@ -96,6 +97,49 @@
       </form>
     </dialog>
 
+    <dialog id="sbDlg" class="fdlg">
+      <form method="dialog">
+        <div id="sbForm">
+          <h2>Set up login with Supabase</h2>
+          <p class="hint-text">Project, database, auth settings and keys in one go.</p>
+          <div class="grid">
+            <label class="wide">Project<select id="sProject"><option value="">＋ Create a new project</option></select></label>
+            <div id="sNew" class="grid wide">
+              <label>New project name<input id="sName" type="text" spellcheck="false" /></label>
+              <label>Organization<select id="sOrg"></select></label>
+              <label>Region<select id="sRegion">
+                <option value="us-east-1">US East (N. Virginia)</option><option value="us-west-1">US West</option>
+                <option value="eu-west-1">EU (Ireland)</option><option value="eu-central-1">EU (Frankfurt)</option>
+                <option value="ap-southeast-1">Asia (Singapore)</option><option value="ap-northeast-1">Asia (Tokyo)</option>
+                <option value="sa-east-1">South America</option></select></label>
+              <label>Database password (save it)<input id="sPass" type="text" spellcheck="false" /></label>
+            </div>
+            <label>Site URL<input id="sSite" type="text" placeholder="https://my-app.vercel.app" /></label>
+            <label>Extra redirect URLs<input id="sRedirects" type="text" value="http://localhost:5173/**" /></label>
+            <label class="check wide"><input id="sProfiles" type="checkbox" checked /> Create a <code>profiles</code> table with row-level security and a signup trigger</label>
+            <label id="sMigrateRow" class="check wide" hidden><input id="sMigrate" type="checkbox" checked /> <span id="sMigrateText"></span></label>
+            <label id="sPatchRow" class="check wide" hidden><input id="sPatch" type="checkbox" checked /> Put the new URL and key into <code>config.js</code> in the zip (then push)</label>
+            <label class="check wide"><input id="sConfirm" type="checkbox" checked /> Require email confirmation (turn off for quick local testing)</label>
+            <label class="check wide"><input id="sVercel" type="checkbox" checked /> Send URL and anon key to Vercel project
+              <input id="sVercelName" type="text" placeholder="vercel project name" />
+              <select id="sPrefix"><option value="VITE_">VITE_</option><option value="NEXT_PUBLIC_">NEXT_PUBLIC_</option><option value="PUBLIC_">PUBLIC_</option><option value="REACT_APP_">REACT_APP_</option></select></label>
+          </div>
+          <p id="sMsg" class="msg" role="status"></p>
+          <div class="actions"><button value="cancel" class="ghost">Cancel</button><button id="sGo" type="button" class="danger">Set up login</button></div>
+        </div>
+        <div id="sbRun" hidden>
+          <h2 id="sRunTitle">Setting up…</h2>
+          <ul id="sSteps" class="steps"></ul>
+          <p id="sRunMsg" class="msg" role="status"></p>
+          <div id="sResult" hidden>
+            <pre id="sOut"></pre>
+            <button id="sCopy" type="button" class="outline">Copy</button>
+          </div>
+          <div id="sRunActions" class="actions" hidden><button value="ok" class="danger">Done</button></div>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="newRepoDlg">
       <form method="dialog">
         <h2>New repo</h2>
@@ -126,6 +170,9 @@
         <input id="vteam" type="text" placeholder="Vercel team ID (optional, team_…)" autocomplete="off" spellcheck="false" />
         <a class="hint" target="_blank" rel="noopener" href="https://vercel.com/account/tokens">Create a Vercel token</a>
         <p class="hint-text">Vercel calls go through this app’s own /api/vercel function. Clear the field and save to remove the token.</p>
+        <label for="sbtoken">Supabase access token (optional, for login setup)</label>
+        <input id="sbtoken" type="password" placeholder="sbp_…" autocomplete="off" spellcheck="false" />
+        <a class="hint" target="_blank" rel="noopener" href="https://supabase.com/dashboard/account/tokens">Create a Supabase access token</a>
         <p id="settingsMsg" role="status"></p>
         <div class="actions">
           <button id="removeToken" type="button" class="ghost">Remove token</button>
