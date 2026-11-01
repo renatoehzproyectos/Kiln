@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kiln · push a zip to a repo</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27><text y=%27.9em%27 font-size=%2790%27>🏺</text></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <script type="module" src="/src/main.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="top">
+      <div><h1>Kiln</h1><p>Fire a zip into a repo.</p></div>
+      <button id="openSettings" class="ghost">Settings</button>
+    </header>
+
+    <section id="needToken" hidden>
+      <p class="lead">Add a GitHub token to see your repos.</p>
+      <button id="addToken" class="primary">Add GitHub token</button>
+    </section>
+
+    <section id="flow" hidden>
+      <label id="drop" class="drop" tabindex="0">
+        <input id="file" type="file" accept=".zip,application/zip" hidden />
+        <strong id="dropTitle">Drop a .zip here</strong>
+        <span id="dropHint">or click to choose</span>
+      </label>
+
+      <div id="roots" class="roots" hidden>
+        <label for="rootSel">Zip root</label>
+        <select id="rootSel"></select>
+      </div>
+
+      <div class="repos">
+        <input id="q" type="search" placeholder="Find a repo, most recently pushed first" autocomplete="off" />
+        <ul id="repoList" role="listbox"></ul>
+      </div>
+
+      <div class="modes" role="radiogroup" aria-label="Push mode">
+        <label><input type="radio" name="mode" value="update" checked />
+          <span><b>Update</b><small>Add and overwrite. Nothing is removed.</small></span></label>
+        <label><input type="radio" name="mode" value="replace" />
+          <span><b>Replace</b><small>Repo matches the zip. Extra files go.</small></span></label>
+      </div>
+
+      <button id="push" class="primary" disabled>Push</button>
+      <p id="status" role="status"></p>
+    </section>
+
+    <dialog id="settings">
+      <form method="dialog">
+        <h2>Settings</h2>
+        <label for="token">GitHub personal access token</label>
+        <input id="token" type="password" placeholder="github_pat_…" autocomplete="off" spellcheck="false" />
+        <a class="hint" target="_blank" rel="noopener"
+           href="https://github.com/settings/personal-access-tokens/new">Create a fine-grained token with “Contents: read and write”</a>
+        <p class="hint-text">Saved in this browser only. It is sent to GitHub and nowhere else.</p>
+        <p id="settingsMsg" role="status"></p>
+        <div class="actions">
+          <button id="removeToken" type="button" class="ghost">Remove token</button>
+          <button value="close" class="ghost">Close</button>
+          <button id="saveToken" type="button" class="danger">Save token</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="confirm">
+      <form method="dialog">
+        <h2>These files are going to be deleted</h2>
+        <ul id="delList"></ul>
+        <div class="actions">
+          <button value="cancel" class="ghost">Cancel</button>
+          <button value="push" class="danger">I understand, push</button>
+        </div>
+      </form>
+    </dialog>
+  </main>
+</body>
+</html>

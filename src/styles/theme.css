@@ -1,0 +1,13 @@
+/* Burnt Sienna palette: desert clay & cream */
+:root {
+  --sienna: #E97451;
+  --cream: #F6E7D8;
+  --sand: #C2A58D;
+  --umber: #7A5C4F;
+  --ink: #2E2A27;
+  --sienna-deep: #c65a38;
+  --paper: #fbf3ea;
+  --radius: 14px;
+  --serif: "Fraunces", Georgia, serif;
+  --sans: "Instrument Sans", system-ui, sans-serif;
+}
