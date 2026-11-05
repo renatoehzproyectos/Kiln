@@ -1,3 +1,6 @@
+import { log } from './log.js';
+import { inflight } from './github.js';
+
 /** Two phases: plan() reads the repo and decides; execute() writes one commit, as few requests as possible. */
 
 const hex = (h) => [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -50,6 +53,7 @@ export async function plan(gh, repo, files, mode) {
       await new Promise((r) => setTimeout(r, 1000));
     }
   }
+  log(`plan: remote tree ${tree.tree.length} entries${tree.truncated ? ' (TRUNCATED)' : ''}, head ${ref.object.sha.slice(0, 7)}`);
   const remote = new Map(tree.tree.filter((t) => t.type === 'blob').map((t) => [t.path, t]));
 
   const entries = [...files];
@@ -60,6 +64,7 @@ export async function plan(gh, repo, files, mode) {
     if (r?.sha === shas[i]) keep.push({ path, sha: shas[i], mode: r.mode });
     else upload.push({ path, data, sha: shas[i], mode: r?.mode || '100644' });
   });
+  log(`plan: ${upload.length} to upload, ${keep.length} unchanged`);
   const deletions = mode === 'replace' ? [...remote.keys()].filter((p) => !files.has(p)).sort() : [];
   return { base, branch, head: ref.object.sha, treeSha: tree.sha, mode, upload, keep, deletions,
            changes: upload.length + deletions.length };
@@ -72,6 +77,14 @@ export async function execute(gh, p, message, onProgress) {
   const total = p.upload.length;
   let done = 0;
   const tick = (n = 1) => { done += n; onProgress(Math.min(done, total), total); };
+  const t0 = performance.now();
+  const watchdog = setInterval(() => {
+    const now = performance.now(), open = [...inflight.values()].sort((a, b) => a.t - b.t);
+    log(`watchdog: ${done}/${total} done, ${open.length} in flight` +
+      (open.length ? `, oldest ${Math.round((now - open[0].t) / 1000)}s: ${open[0].tag} (${open[0].kb}KB)` : ''));
+  }, 5000);
+  try { return await run(); } finally { clearInterval(watchdog); log(`execute finished after ${Math.round(performance.now() - t0)}ms`); }
+  async function run() {
 
   // Split: text goes inline in tree entries; binary needs a blob. Identical content is uploaded once.
   const inline = [], binary = [], seen = new Map();
@@ -82,10 +95,13 @@ export async function execute(gh, p, message, onProgress) {
     else { const g = { f, paths: [f] }; seen.set(f.sha, g); binary.push(g); }
   }
 
+  log(`execute: ${inline.length} inline text files, ${binary.length} blobs (${p.upload.length - inline.length - binary.length} duplicates)`);
+
   // Binary: one blob each, in parallel.
   const blobEntries = [];
   const blobsDone = pool(binary, CONCURRENCY, async ({ f, paths }) => {
     const b = await gh.post(`${p.base}/git/blobs`, { content: await toBase64(f.data), encoding: 'base64' });
+    if (done % 50 === 0) log(`blob progress ${done}/${total}`);
     for (const x of paths) blobEntries.push({ path: x.path, mode: x.mode, type: 'blob', sha: b.sha });
     tick(paths.length);
   });
@@ -116,7 +132,9 @@ export async function execute(gh, p, message, onProgress) {
   const treeSha = last.length ? (await gh.post(`${p.base}/git/trees`, { base_tree: baseTree, tree: last })).sha : baseTree;
   const c = await gh.post(`${p.base}/git/commits`, { message, tree: treeSha, parents: [p.head] });
   await gh.patch(`${p.base}/git/refs/heads/${p.branch}`, { sha: c.sha });
+  log(`commit ${c.sha.slice(0, 7)} pushed`);
   return c;
+  }
 }
 
 /** Reset the branch to where it was before a push. Refuses if the branch has moved on. */

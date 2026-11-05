@@ -4,6 +4,7 @@ import { GitHub } from './lib/github.js';
 import { readZip, rootCandidates, filesUnder } from './lib/zip.js';
 import { Supabase, setupLogin, planSteps, finishSetup, finishSteps } from './lib/supabase.js';
 import { Vercel, deploy, guessFramework } from './lib/vercel.js';
+import { log, logText, logClear, logSub } from './lib/log.js';
 import { plan, execute, undo as undoPush } from './lib/push.js';
 
 const $ = (s) => document.querySelector(s);
@@ -147,8 +148,20 @@ const confirmDeletes = (list) => new Promise((resolve) => {
   dlg.showModal();
 });
 
+const dbg = $('#dbgLog');
+logSub(() => { dbg.textContent = logText(); dbg.scrollTop = dbg.scrollHeight; });
+$('#dbgCopy').onclick = async (e) => {
+  try { await navigator.clipboard.writeText(logText()); e.target.textContent = 'Copied'; }
+  catch { const r = document.createRange(); r.selectNodeContents(dbg); getSelection().removeAllRanges(); getSelection().addRange(r); e.target.textContent = 'Selected, press copy'; }
+  setTimeout(() => { e.target.textContent = 'Copy log'; }, 1500);
+};
+$('#dbgClear').onclick = logClear;
+window.addEventListener('error', (e) => log(`window error: ${e.message}`));
+window.addEventListener('unhandledrejection', (e) => log(`unhandled rejection: ${e.reason?.message || e.reason}`));
+
 $('#push').onclick = async () => {
   s.busy = true; refresh(); say('Reading repo…');
+  logClear(); log(`push start: ${s.repo.full_name}, mode ${curMode()}, ${currentFiles().size} files, UA ${navigator.userAgent}`);
   try {
     const p = await plan(s.gh, s.repo, currentFiles(), curMode());
     if (!p.changes) return say('Already up to date. Nothing to push.', 'ok');
@@ -160,7 +173,7 @@ $('#push').onclick = async () => {
     s.repo.pushed_at = new Date().toISOString();
     s.repos.sort((a, b) => new Date(b.pushed_at) - new Date(a.pushed_at));
     renderRepos();
-  } catch (e) { say(esc(e.message), 'error'); }
+  } catch (e) { log(`ERROR: ${e.stack || e.message}`); say(esc(e.message), 'error'); }
   finally { s.busy = false; refresh(); }
 };
 

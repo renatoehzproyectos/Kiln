@@ -96,3 +96,8 @@ code{font-family:ui-monospace,monospace;background:var(--paper);padding:1px 5px;
 .steps li.run{color:var(--ink);font-weight:600}.steps li.ok{color:var(--ink)}.steps li.ok i{color:var(--sienna-deep)}
 .steps li.fail{color:#a3321b}.steps small{flex-basis:100%;padding-left:2em;overflow-wrap:anywhere}
 #sOut{margin:0 0 8px;padding:12px;background:var(--paper);border-radius:10px;font:.78rem/1.5 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;max-height:34vh;overflow:auto}
+
+#dbg { margin-top: .75rem; font-size: .8rem; }
+#dbg summary { cursor: pointer; opacity: .7; }
+.dbg-bar { display: flex; gap: .5rem; margin: .5rem 0; }
+#dbgLog { max-height: 14rem; overflow: auto; white-space: pre-wrap; word-break: break-all; user-select: text; padding: .5rem; border: 1px solid var(--border, #8884); border-radius: 6px; font: 11px/1.4 ui-monospace, monospace; }

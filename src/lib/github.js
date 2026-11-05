@@ -1,15 +1,24 @@
+import { log } from './log.js';
 const API = 'https://api.github.com';
+const TIMEOUT = 45000;     // a hung request is aborted and retried instead of freezing the push
+export const inflight = new Map();
+let seq = 0;
 
 export class GitHub {
   constructor(token) { this.token = token; }
 
   async request(method, path, body) {
     const payload = body && JSON.stringify(body);
+    const id = ++seq, tag = `#${id} ${method} ${path.slice(0, 70)}`;
     for (let attempt = 0; ; attempt++) {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), TIMEOUT);
+      const t = performance.now();
+      inflight.set(id, { tag, t, kb: payload ? Math.round(payload.length / 1024) : 0 });
       let res;
       try {
         res = await fetch(API + path, {
-          method,
+          method, signal: ac.signal,
           headers: {
             Authorization: `Bearer ${this.token}`,
             Accept: 'application/vnd.github+json',
@@ -18,16 +27,27 @@ export class GitHub {
           },
           body: payload,
         });
-      } catch (e) {                       // network blip: retry
+      } catch (e) {
+        clearTimeout(timer); inflight.delete(id);
+        const why = ac.signal.aborted ? `timeout after ${TIMEOUT / 1000}s` : e.message;
+        log(`${tag} FAILED (${why}) attempt ${attempt + 1}`);
         if (attempt < 5) { await new Promise((r) => setTimeout(r, 400 * 2 ** attempt)); continue; }
-        throw e;
+        throw new Error(`Network error: ${why}`);
       }
-      if (res.ok) return res.status === 204 ? null : res.json();
+      clearTimeout(timer); inflight.delete(id);
+      const ms = Math.round(performance.now() - t);
+      if (res.ok) {
+        if (attempt || ms > 5000) log(`${tag} ok ${res.status} in ${ms}ms (attempt ${attempt + 1}, remaining=${res.headers.get('x-ratelimit-remaining')})`);
+        return res.status === 204 ? null : res.json();
+      }
       const j = await res.json().catch(() => ({}));
       const limited = res.status === 429 || (res.status === 403 && /rate limit|abuse|secondary/i.test(j.message || ''));
+      log(`${tag} -> ${res.status} in ${ms}ms: ${j.message || res.statusText} | retry-after=${res.headers.get('retry-after')} remaining=${res.headers.get('x-ratelimit-remaining')} reset=${res.headers.get('x-ratelimit-reset')}`);
       if ((limited || res.status >= 500) && attempt < 6) {
         const ra = Number(res.headers.get('retry-after'));
-        await new Promise((r) => setTimeout(r, ra ? ra * 1000 : Math.min(30000, 800 * 2 ** attempt)));
+        const wait = ra ? Math.min(ra, 120) * 1000 : Math.min(30000, 800 * 2 ** attempt);
+        log(`${tag} waiting ${Math.round(wait / 1000)}s before retry ${attempt + 2}`);
+        await new Promise((r) => setTimeout(r, wait));
         continue;
       }
       throw new Error(`GitHub ${res.status}: ${j.message || res.statusText}`);
