@@ -4,21 +4,34 @@ export class GitHub {
   constructor(token) { this.token = token; }
 
   async request(method, path, body) {
-    const res = await fetch(API + path, {
-      method,
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-        Accept: 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-        ...(body && { 'Content-Type': 'application/json' }),
-      },
-      body: body && JSON.stringify(body),
-    });
-    if (!res.ok) {
+    const payload = body && JSON.stringify(body);
+    for (let attempt = 0; ; attempt++) {
+      let res;
+      try {
+        res = await fetch(API + path, {
+          method,
+          headers: {
+            Authorization: `Bearer ${this.token}`,
+            Accept: 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+            ...(body && { 'Content-Type': 'application/json' }),
+          },
+          body: payload,
+        });
+      } catch (e) {                       // network blip: retry
+        if (attempt < 5) { await new Promise((r) => setTimeout(r, 400 * 2 ** attempt)); continue; }
+        throw e;
+      }
+      if (res.ok) return res.status === 204 ? null : res.json();
       const j = await res.json().catch(() => ({}));
+      const limited = res.status === 429 || (res.status === 403 && /rate limit|abuse|secondary/i.test(j.message || ''));
+      if ((limited || res.status >= 500) && attempt < 6) {
+        const ra = Number(res.headers.get('retry-after'));
+        await new Promise((r) => setTimeout(r, ra ? ra * 1000 : Math.min(30000, 800 * 2 ** attempt)));
+        continue;
+      }
       throw new Error(`GitHub ${res.status}: ${j.message || res.statusText}`);
     }
-    return res.status === 204 ? null : res.json();
   }
 
   get = (p) => this.request('GET', p);
