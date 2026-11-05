@@ -70,13 +70,19 @@ export async function plan(gh, repo, files, mode) {
            changes: upload.length + deletions.length };
 }
 
-const CONCURRENCY = 24;        // GitHub allows up to 100 concurrent requests; HTTP/2 multiplexes them
-const INLINE_CHUNK = 3_000_000; // bytes of inline text per tree request (GitHub caps trees ~7 MB)
+const BIG = 1_000_000;          // files over this (or non-default mode) get their own blob request
+const BIG_CONCURRENCY = 6;      // big bodies are bandwidth-bound; more parallelism just adds 403s
+const CHAIN_BYTES = 6_000_000;  // base64 bytes per GraphQL commit
+const INLINE_CHUNK = 3_000_000; // fallback path: inline text per tree request
+const CONCURRENCY = 16;         // fallback path: small blobs in parallel
+
+const GQL = `mutation($input: CreateCommitOnBranchInput!) {
+  createCommitOnBranch(input: $input) { commit { oid tree { oid } } } }`;
 
 export async function execute(gh, p, message, onProgress) {
   const total = p.upload.length;
   let done = 0;
-  const tick = (n = 1) => { done += n; onProgress(Math.min(done, total), total); };
+  const tick = (n = 1) => { done += n; onProgress(Math.min(Math.max(done, 0), total), total); };
   const t0 = performance.now();
   const watchdog = setInterval(() => {
     const now = performance.now(), open = [...inflight.values()].sort((a, b) => a.t - b.t);
@@ -84,56 +90,105 @@ export async function execute(gh, p, message, onProgress) {
       (open.length ? `, oldest ${Math.round((now - open[0].t) / 1000)}s: ${open[0].tag} (${open[0].kb}KB)` : ''));
   }, 5000);
   try { return await run(); } finally { clearInterval(watchdog); log(`execute finished after ${Math.round(performance.now() - t0)}ms`); }
-  async function run() {
 
-  // Split: text goes inline in tree entries; binary needs a blob. Identical content is uploaded once.
-  const inline = [], binary = [], seen = new Map();
-  for (const f of p.upload) {
-    const text = asText(f.data);
-    if (text !== null) inline.push({ path: f.path, mode: f.mode, type: 'blob', content: text, size: f.data.length });
-    else if (seen.has(f.sha)) seen.get(f.sha).paths.push(f);
-    else { const g = { f, paths: [f] }; seen.set(f.sha, g); binary.push(g); }
+  async function run() {
+    const isBig = (f) => f.data.length > BIG || f.mode !== '100644';
+    const big = p.upload.filter(isBig).sort((a, b) => b.data.length - a.data.length);   // biggest first
+    const small = p.upload.filter((f) => !isBig(f));
+    log(`execute: ${big.length} big files (${Math.round(big.reduce((s, f) => s + f.data.length, 0) / 1e6)}MB) via blobs, ${small.length} small files via batched commits`);
+
+    const entries = [];   // tree entries that point at blobs
+    const groups = new Map();
+    for (const f of big) { if (groups.has(f.sha)) groups.get(f.sha).push(f); else groups.set(f.sha, [f]); }
+
+    const bigDone = pool([...groups.values()], BIG_CONCURRENCY, async (fs) => {
+      const b = await gh.post(`${p.base}/git/blobs`, { content: await toBase64(fs[0].data), encoding: 'base64' });
+      for (const x of fs) entries.push({ path: x.path, mode: x.mode, type: 'blob', sha: b.sha });
+      tick(fs.length);
+    });
+
+    const smallDone = commitSmall(small, entries);
+    const [baseTree] = await Promise.all([smallDone, bigDone]);
+
+    const last = [...entries, ...p.deletions.map((path) => ({ path, mode: '100644', type: 'blob', sha: null }))];
+    const treeSha = last.length ? (await gh.post(`${p.base}/git/trees`, { base_tree: baseTree, tree: last })).sha : baseTree;
+    const c = await gh.post(`${p.base}/git/commits`, { message, tree: treeSha, parents: [p.head] });
+    await gh.patch(`${p.base}/git/refs/heads/${p.branch}`, { sha: c.sha });
+    log(`commit ${c.sha.slice(0, 7)} pushed`);
+    return c;
   }
 
-  log(`execute: ${inline.length} inline text files, ${binary.length} blobs (${p.upload.length - inline.length - binary.length} duplicates)`);
-
-  // Binary: one blob each, in parallel.
-  const blobEntries = [];
-  const blobsDone = pool(binary, CONCURRENCY, async ({ f, paths }) => {
-    const b = await gh.post(`${p.base}/git/blobs`, { content: await toBase64(f.data), encoding: 'base64' });
-    if (done % 50 === 0) log(`blob progress ${done}/${total}`);
-    for (const x of paths) blobEntries.push({ path: x.path, mode: x.mode, type: 'blob', sha: b.sha });
-    tick(paths.length);
-  });
-
-  // Text: a handful of tree requests chained on base_tree, running while the blobs upload.
-  const textDone = (async () => {
-    let tree = p.treeSha;
-    const chunks = [];
-    let cur = [], size = 0;
-    for (const e of inline) {
-      if (size + e.size > INLINE_CHUNK && cur.length) { chunks.push(cur); cur = []; size = 0; }
-      cur.push(e); size += e.size;
+  /** Small files: a few GraphQL commits on a throwaway branch (1 request per ~4 MB), then we keep only their tree. */
+  async function commitSmall(small, entries) {
+    if (!small.length) return p.treeSha;
+    try { return await viaGraphQL(small); }
+    catch (e) {
+      log(`graphql path failed (${e.message}); falling back to REST for ${small.length} files`);
+      return viaRest(small, entries);
     }
-    if (cur.length) chunks.push(cur);
-    for (const c of chunks) {
-      const t = await gh.post(`${p.base}/git/trees`, {
-        base_tree: tree, tree: c.map(({ size: _s, ...e }) => e),
-      });
-      tree = t.sha; tick(c.length);
+  }
+
+  async function viaGraphQL(small) {
+    const repo = p.base.slice('/repos/'.length);
+    const tmp = `kiln-tmp-${Date.now().toString(36)}`;
+    await gh.post(`${p.base}/git/refs`, { ref: `refs/heads/${tmp}`, sha: p.head });
+    let oid = p.head, tree = p.treeSha, n = 0;
+    try {
+      const batches = []; let cur = [], size = 0;
+      for (const f of small) {
+        const sz = Math.ceil(f.data.length * 4 / 3) + f.path.length + 64;
+        if (size + sz > CHAIN_BYTES && cur.length) { batches.push(cur); cur = []; size = 0; }
+        cur.push(f); size += sz;
+      }
+      if (cur.length) batches.push(cur);
+      // encode every batch up front (native, off-thread) while earlier commits are in flight
+      const encoded = batches.map((b) => Promise.all(b.map(async (f) => ({ path: f.path, contents: await toBase64(f.data) }))));
+      log(`graphql: ${batches.length} commit(s) for ${small.length} files`);
+      for (let i = 0; i < batches.length; i++) {
+        const additions = await encoded[i];
+        const r = await gh.graphql(GQL, { input: {
+          branch: { repositoryNameWithOwner: repo, branchName: tmp },
+          message: { headline: message }, expectedHeadOid: oid, fileChanges: { additions },
+        } });
+        const c = r.createCommitOnBranch.commit;
+        oid = c.oid; tree = c.tree.oid; n += batches[i].length; tick(batches[i].length);
+        log(`graphql commit ${i + 1}/${batches.length} ok (${batches[i].length} files)`);
+      }
+      return tree;
+    } catch (e) { done -= n; throw e; }
+    finally { try { await gh.del(`${p.base}/git/refs/heads/${tmp}`); } catch (e) { log(`temp branch cleanup failed: ${e.message}`); } }
+  }
+
+  /** Previous approach, kept as a fallback: inline text in trees + one blob per binary. */
+  async function viaRest(small, entries) {
+    const inline = [], binary = [], seen = new Map();
+    for (const f of small) {
+      const text = asText(f.data);
+      if (text !== null) inline.push({ path: f.path, mode: f.mode, type: 'blob', content: text, size: f.data.length });
+      else if (seen.has(f.sha)) seen.get(f.sha).paths.push(f);
+      else { const g = { f, paths: [f] }; seen.set(f.sha, g); binary.push(g); }
     }
+    const blobsDone = pool(binary, CONCURRENCY, async ({ f, paths }) => {
+      const b = await gh.post(`${p.base}/git/blobs`, { content: await toBase64(f.data), encoding: 'base64' });
+      for (const x of paths) entries.push({ path: x.path, mode: x.mode, type: 'blob', sha: b.sha });
+      tick(paths.length);
+    });
+    const textDone = (async () => {
+      let tree = p.treeSha, cur = [], size = 0;
+      const chunks = [];
+      for (const e of inline) {
+        if (size + e.size > INLINE_CHUNK && cur.length) { chunks.push(cur); cur = []; size = 0; }
+        cur.push(e); size += e.size;
+      }
+      if (cur.length) chunks.push(cur);
+      for (const c of chunks) {
+        tree = (await gh.post(`${p.base}/git/trees`, { base_tree: tree, tree: c.map(({ size: _s, ...e }) => e) })).sha;
+        tick(c.length);
+      }
+      return tree;
+    })();
+    const [tree] = await Promise.all([textDone, blobsDone]);
     return tree;
-  })();
-
-  const [baseTree] = await Promise.all([textDone, blobsDone]);
-
-  // Final tree: the blob entries plus deletions (Replace mode), on top of the text-chain tree.
-  const last = [...blobEntries, ...p.deletions.map((path) => ({ path, mode: '100644', type: 'blob', sha: null }))];
-  const treeSha = last.length ? (await gh.post(`${p.base}/git/trees`, { base_tree: baseTree, tree: last })).sha : baseTree;
-  const c = await gh.post(`${p.base}/git/commits`, { message, tree: treeSha, parents: [p.head] });
-  await gh.patch(`${p.base}/git/refs/heads/${p.branch}`, { sha: c.sha });
-  log(`commit ${c.sha.slice(0, 7)} pushed`);
-  return c;
   }
 }
 

@@ -11,6 +11,7 @@ export class GitHub {
     const payload = body && JSON.stringify(body);
     const id = ++seq, tag = `#${id} ${method} ${path.slice(0, 70)}`;
     for (let attempt = 0; ; attempt++) {
+      await this.gate();
       const ac = new AbortController();
       const timer = setTimeout(() => ac.abort(), TIMEOUT);
       const t = performance.now();
@@ -47,16 +48,25 @@ export class GitHub {
         const ra = Number(res.headers.get('retry-after'));
         const wait = ra ? Math.min(ra, 120) * 1000 : Math.min(30000, 800 * 2 ** attempt);
         log(`${tag} waiting ${Math.round(wait / 1000)}s before retry ${attempt + 2}`);
-        await new Promise((r) => setTimeout(r, wait));
+        if (limited) this.until = Math.max(this.until || 0, Date.now() + wait);   // pause EVERY request, not just this one
+        else await new Promise((r) => setTimeout(r, wait));
         continue;
       }
       throw new Error(`GitHub ${res.status}: ${j.message || res.statusText}`);
     }
   }
 
+  async gate() { const w = (this.until || 0) - Date.now(); if (w > 0) await new Promise((r) => setTimeout(r, w)); }
+
   get = (p) => this.request('GET', p);
   post = (p, b) => this.request('POST', p, b);
   patch = (p, b) => this.request('PATCH', p, b);
+  del = (p) => this.request('DELETE', p);
+  async graphql(query, variables) {
+    const j = await this.request('POST', '/graphql', { query, variables });
+    if (j.errors?.length) throw new Error(`GraphQL: ${j.errors[0].message}`);
+    return j.data;
+  }
 
   /** New repo with an initial commit, so the Git Data API can write to it. */
   createRepo = (name, isPrivate) => this.post('/user/repos', { name, private: isPrivate, auto_init: true });
